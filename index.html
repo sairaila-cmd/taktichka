@@ -219,10 +219,17 @@ window.dash = (() => {
     colors: ['#e7e07c', '#9a9a96', '#f6f2de', '#7aa2d6', '#d68a7a', '#8fc49a', '#b59ad6', '#d6b97a'],
   };
   let w = window.innerWidth, t;
+  const queueRender = () => {
+    if (t) return;
+    t = requestAnimationFrame(() => {
+      t = null;
+      subs.forEach((fn) => fn());
+    });
+  };
   window.addEventListener('resize', () => {
     if (window.innerWidth === w) return;
-    w = window.innerWidth; clearTimeout(t);
-    t = setTimeout(() => subs.forEach((fn) => fn()), 120);
+    w = window.innerWidth;
+    queueRender();
   });
   return api;
 })();
@@ -235,6 +242,15 @@ window.FZ = {
   num: d3.format(','),
   dec: (x) => d3.format('.1f')(x).replace('.', ','),
   state: { rank: null, q: '', owner: null, sort: { k: 'Сумма', dir: -1 } },
+  renderQueued: false,
+  scheduleRender() {
+    if (this.renderQueued) return;
+    this.renderQueued = true;
+    requestAnimationFrame(() => {
+      this.renderQueued = false;
+      this.draw();
+    });
+  },
 };
 
 dash.calc('summary', {
@@ -347,6 +363,11 @@ dash.calc('props', {
       color: (d) => (FZ.state.rank && FZ.state.rank !== d.key) ? 'var(--cds-chart-muted)' : col(0),
       click: (d) => { FZ.setRank(FZ.state.rank === d.key ? null : d.key); FZ.scrollTable(); },
     });
+  }
+
+  function clearNode(node) {
+    if (!node || !node.firstChild) return;
+    while (node.firstChild) node.removeChild(node.firstChild);
   }
 
   function drawAvg(el, rows) {
@@ -465,15 +486,15 @@ dash.calc('props', {
   ownerChip.addEventListener('click', () => FZ.setOwner(null));
   chips.appendChild(ownerChip);
 
-  FZ.setRank = (r) => { FZ.state.rank = r; FZ.draw(); };
-  FZ.setOwner = (o) => { FZ.state.owner = o; FZ.draw(); };
+  FZ.setRank = (r) => { FZ.state.rank = r; FZ.scheduleRender(); };
+  FZ.setOwner = (o) => { FZ.state.owner = o; FZ.scheduleRender(); };
   FZ.scrollTable = () => { const el = document.getElementById('all'); el.scrollIntoView({ behavior: 'smooth', block: 'start' }); dash.setLink('all'); };
 
-  q.addEventListener('input', () => { FZ.state.q = q.value.trim().toLowerCase(); FZ.drawTable(); });
+  q.addEventListener('input', () => { FZ.state.q = q.value.trim().toLowerCase(); FZ.scheduleRender(); });
   document.querySelectorAll('.fz-th').forEach((b) => b.addEventListener('click', () => {
     const k = b.dataset.k, s = FZ.state.sort;
     FZ.state.sort = { k, dir: s.k === k ? -s.dir : (NUM.has(k) ? -1 : 1) };
-    FZ.drawTable();
+    FZ.scheduleRender();
   }));
 
   FZ.drawTable = function () {
@@ -501,7 +522,9 @@ dash.calc('props', {
     });
     const maxSum = d3.max(fg.data, (f) => f['Сумма']) || 1;
     count.textContent = num(rows.length) + ' из ' + num(fg.data.length);
-    tbody.replaceChildren(...rows.map((f) => {
+
+    const frag = document.createDocumentFragment();
+    rows.forEach((f) => {
       const tr = document.createElement('tr');
       const td = (text, cls) => { const c = document.createElement('td'); if (cls) c.className = cls; c.textContent = text; tr.appendChild(c); return c; };
       td(f['Фигура']);
@@ -515,11 +538,12 @@ dash.calc('props', {
       td(f['Свойство']);
       td(f['Владелец'], 'fz-hide-narrow');
       td(f['Источники'], 'fz-hide-narrow fz-src');
-      return tr;
-    }));
+      frag.appendChild(tr);
+    });
+    tbody.replaceChildren(frag);
   };
 
-  dash.onData(() => FZ.draw());
+  dash.onData(() => FZ.scheduleRender());
   const named = document.getElementById(location.hash.slice(1));
   if (named) setTimeout(() => named.scrollIntoView(), 0);
 })();
